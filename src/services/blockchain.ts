@@ -26,9 +26,10 @@ export async function generateTxHash(blockNum: number, timestamp: string, payloa
 export async function createGenesisBlock(): Promise<BlockchainBlock> {
   const timestamp = '2026-10-12 00:00:00 UTC';
   const payload = {
-    contract: 'EnergyLedger.sol',
-    version: '1.0.0',
-    description: 'Smart Campus Tamper-Resistant Energy & Cut-Off Ledger Genesis',
+    contracts: ['EnergyLedger.sol', 'CampusPowerLease.sol'],
+    version: '2.0.0-reversed',
+    description: 'Smart Campus Zero-Trust Power Grid & Just-in-Time Circuit Lease Ledger',
+    architecture: 'Dual-Engine: Reactive Watchdog + Reversed Zero-Trust Lease Controller',
     consensus: 'Proof of Authority (University Consortium Node)'
   };
   const dataString = JSON.stringify(payload);
@@ -137,7 +138,7 @@ export async function verifyBlockchainIntegrity(chain: BlockchainBlock[]): Promi
 }
 
 /**
- * Mock Smart Contract Code representation for judges to inspect
+ * Smart Contract Code for Reactive Cut-Off
  */
 export const SOLIDITY_CONTRACT_CODE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -158,21 +159,10 @@ contract CampusEnergyLedger {
         bool automated;
     }
     
-    struct OverrideRecord {
-        uint256 blockTimestamp;
-        string roomId;
-        address authorizedBy;
-        uint256 durationSeconds;
-        string reason;
-    }
-    
-    event EnergyCutoffLogged(uint256 indexed eventId, string roomId, uint256 savedKWh);
-    event OverrideGranted(string indexed roomId, address authorizedBy, uint256 duration);
-    event GreenCreditsAwarded(string indexed department, uint256 creditAmount);
-
     mapping(uint256 => CutoffEvent) public cutoffLedger;
-    mapping(string => uint256) public departmentGreenCredits;
     uint256 public totalCutoffs;
+
+    event EnergyCutoffLogged(uint256 indexed eventId, string roomId, uint256 savedKWh);
 
     constructor() {
         facilityManager = msg.sender;
@@ -197,12 +187,80 @@ contract CampusEnergyLedger {
         emit EnergyCutoffLogged(totalCutoffs, _roomId, _savedWh / 1000);
         return totalCutoffs;
     }
+}`;
 
-    function grantOverride(
+/**
+ * Smart Contract Code for REVERSED LOGIC (Zero-Trust Power Lease Model)
+ */
+export const SOLIDITY_POWER_LEASE_CONTRACT = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/**
+ * @title CampusPowerLease (REVERSED LOGIC ENGINE)
+ * @dev Enforces Default-OFF Zero-Trust grid. Non-essential circuits can only be energized
+ *      by possessing a cryptographically verified, time-bound Power Lease Token.
+ */
+contract CampusPowerLease {
+    address public gridAdmin;
+
+    struct CircuitLease {
+        bytes32 leaseId;
+        string roomId;
+        address requester;
+        uint256 energizedAt;
+        uint256 expiresAt;
+        bool isActive;
+    }
+
+    mapping(bytes32 => CircuitLease) public activeLeases;
+    mapping(string => bytes32) public roomCurrentLease;
+
+    event CircuitEnergized(bytes32 indexed leaseId, string roomId, address requester, uint256 duration);
+    event CircuitDeEnergized(bytes32 indexed leaseId, string roomId, string reason);
+
+    modifier onlyAdmin() {
+        require(msg.sender == gridAdmin, "Only grid admin");
+        _;
+    }
+
+    constructor() {
+        gridAdmin = msg.sender;
+    }
+
+    /**
+     * @notice Unlocks power to a room for a designated lecture slot or authorized request
+     * @dev Zero power flows unless this transaction is mined into the blockchain
+     */
+    function requestPowerLease(
         string memory _roomId,
         uint256 _durationSeconds,
-        string memory _reason
-    ) external {
-        emit OverrideGranted(_roomId, msg.sender, _durationSeconds);
+        string memory _purpose
+    ) external returns (bytes32) {
+        bytes32 leaseId = keccak256(abi.encodePacked(_roomId, msg.sender, block.timestamp));
+
+        activeLeases[leaseId] = CircuitLease({
+            leaseId: leaseId,
+            roomId: _roomId,
+            requester: msg.sender,
+            energizedAt: block.timestamp,
+            expiresAt: block.timestamp + _durationSeconds,
+            isActive: true
+        });
+
+        roomCurrentLease[_roomId] = leaseId;
+        emit CircuitEnergized(leaseId, _roomId, msg.sender, _durationSeconds);
+        return leaseId;
+    }
+
+    /**
+     * @notice IoT relay or node calls this to confirm lease expiration and revert to Default-OFF
+     */
+    function expireLease(bytes32 _leaseId) external {
+        CircuitLease storage lease = activeLeases[_leaseId];
+        require(block.timestamp >= lease.expiresAt, "Lease has not yet expired");
+        require(lease.isActive, "Already de-energized");
+
+        lease.isActive = false;
+        emit CircuitDeEnergized(_leaseId, lease.roomId, "Time expired -> returned to default OFF");
     }
 }`;

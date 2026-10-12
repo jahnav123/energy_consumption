@@ -1,5 +1,7 @@
 export type SwitchType = 'hvac' | 'lights' | 'projector' | 'workstations';
 
+export type SystemMode = 'watchdog' | 'zero_trust';
+
 export interface SwitchState {
   hvac: boolean;
   lights: boolean;
@@ -7,9 +9,9 @@ export interface SwitchState {
   workstations: boolean;
 }
 
-export type RelayStatus = 'CONNECTED' | 'DISCONNECTED' | 'GRACE_PERIOD';
+export type RelayStatus = 'CONNECTED' | 'DISCONNECTED' | 'GRACE_PERIOD' | 'DE_ENERGIZED_LOCKED';
 
-export type RoomAnomalyStatus = 'NORMAL' | 'UNSCHEDULED_CONSUMPTION' | 'OVERRIDE_ACTIVE';
+export type RoomAnomalyStatus = 'NORMAL' | 'UNSCHEDULED_CONSUMPTION' | 'OVERRIDE_ACTIVE' | 'ZERO_TRUST_LOCKED';
 
 export interface ScheduleSlot {
   id: string;
@@ -31,6 +33,18 @@ export interface OverrideInfo {
   txHash: string;
 }
 
+export interface PowerLease {
+  leaseId: string;
+  roomId: string;
+  grantedTo: string;
+  role: string;
+  durationMinutes: number;
+  expiresAt: string;
+  remainingMinutes: number;
+  txHash: string;
+  active: boolean;
+}
+
 export interface CampusRoom {
   id: string;
   name: string;
@@ -47,6 +61,7 @@ export interface CampusRoom {
   graceTimeRemainingSec: number;
   totalSavedKWh: number;
   override?: OverrideInfo;
+  activeLease?: PowerLease;
 }
 
 export interface BuildingStats {
@@ -67,7 +82,9 @@ export type BlockEventType =
   | 'RELAY_CUTOFF'
   | 'OVERRIDE_AUTHORIZED'
   | 'BATCH_TELEMETRY_PROOF'
-  | 'GREEN_CREDITS_MINTED';
+  | 'GREEN_CREDITS_MINTED'
+  | 'POWER_LEASE_MINTED'
+  | 'POWER_LEASE_EXPIRED';
 
 export interface BlockchainBlock {
   blockNumber: number;

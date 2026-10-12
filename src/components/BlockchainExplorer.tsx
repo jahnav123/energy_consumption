@@ -8,16 +8,15 @@ import {
   RefreshCw, 
   AlertOctagon, 
   CheckCircle2, 
-  FileCheck2, 
-  ExternalLink,
-  Lock,
-  ChevronDown,
-  ChevronRight,
-  Flame,
-  Zap
+  Lock, 
+  ChevronDown, 
+  ChevronRight, 
+  Flame, 
+  KeyRound,
+  RotateCw
 } from 'lucide-react';
 import { BlockchainBlock } from '../types';
-import { SOLIDITY_CONTRACT_CODE, VerificationResult } from '../services/blockchain';
+import { SOLIDITY_CONTRACT_CODE, SOLIDITY_POWER_LEASE_CONTRACT, VerificationResult } from '../services/blockchain';
 
 interface BlockchainExplorerProps {
   blocks: BlockchainBlock[];
@@ -35,6 +34,7 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
   onReverifyChain,
 }) => {
   const [selectedTab, setSelectedTab] = useState<'blocks' | 'contract'>('blocks');
+  const [selectedContract, setSelectedContract] = useState<'ledger' | 'lease'>('lease');
   const [expandedBlock, setExpandedBlock] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -72,13 +72,13 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
               </span>
               <div>
                 <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-                  Campus Energy Smart Contract Ledger
+                  Campus Dual Smart Contract Ledger
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">
                     EVM PoA Testnet
                   </span>
                 </h2>
                 <p className="text-xs text-slate-400 font-mono">
-                  Contract: 0x98A...E47C • Total Blocks: {blocks.length} • Consensus: PoA Consortium
+                  Dual Contracts: EnergyLedger.sol & CampusPowerLease.sol • Total Blocks: {blocks.length}
                 </p>
               </div>
             </div>
@@ -150,7 +150,7 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
         </div>
       </div>
 
-      {/* View Switcher: Blocks vs Solidity Contract */}
+      {/* View Switcher: Blocks vs Solidity Contracts */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
         <div className="flex space-x-2">
           <button
@@ -173,7 +173,7 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
             }`}
           >
             <Code className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Solidity Smart Contract (`EnergyLedger.sol`)</span>
+            <span>Solidity Smart Contracts (2)</span>
           </button>
         </div>
 
@@ -197,6 +197,7 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
           {filteredBlocks.map(block => {
             const isCorrupted = block.isTampered;
             const isExpanded = expandedBlock === block.blockNumber;
+            const isLeaseEvent = block.eventType === 'POWER_LEASE_MINTED';
 
             return (
               <div
@@ -213,12 +214,19 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
                   className="p-4 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer select-none"
                 >
                   <div className="flex items-center space-x-3">
-                    <span className="font-mono font-bold text-sm text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-lg border border-indigo-500/20">
+                    <span className={`font-mono font-bold text-sm px-2.5 py-1 rounded-lg border ${
+                      isLeaseEvent
+                        ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                        : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+                    }`}>
                       #{block.blockNumber}
                     </span>
                     <div>
                       <div className="flex items-center space-x-2">
-                        <span className="font-bold text-sm text-white">{block.eventType}</span>
+                        <span className="font-bold text-sm text-white flex items-center gap-1.5">
+                          {isLeaseEvent && <RotateCw className="w-3.5 h-3.5 text-purple-400" />}
+                          {block.eventType}
+                        </span>
                         {block.buildingName && (
                           <span className="text-xs text-slate-400 font-sans">• {block.buildingName}</span>
                         )}
@@ -269,12 +277,6 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
                             {block.dataHash}
                           </span>
                         </div>
-                        {isCorrupted && (
-                          <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
-                            <span className="font-bold block">Tampered Value Detected:</span>
-                            Database record was modified off-chain! Cryptographic check fails against parent Merkle root.
-                          </div>
-                        )}
                         <div>
                           <span className="text-slate-400 block text-[11px]">Previous Block Hash:</span>
                           <span className="text-slate-400 break-all">{block.prevHash}</span>
@@ -301,18 +303,36 @@ export const BlockchainExplorer: React.FC<BlockchainExplorerProps> = ({
         </div>
       )}
 
-      {/* TAB 2: SOLIDITY CONTRACT VIEWER */}
+      {/* TAB 2: SOLIDITY CONTRACTS VIEWER */}
       {selectedTab === 'contract' && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden">
-          <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Code className="w-4 h-4 text-indigo-400" />
-              <span className="font-mono text-xs font-bold text-white">contracts/CampusEnergyLedger.sol</span>
-            </div>
-            <span className="text-xs text-slate-400 font-mono">Solidity ^0.8.20 • OpenZeppelin Standard</span>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden space-y-4 p-4">
+          <div className="flex gap-2 border-b border-slate-800 pb-3">
+            <button
+              onClick={() => setSelectedContract('lease')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                selectedContract === 'lease'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'bg-slate-800 text-slate-300 hover:text-white'
+              }`}
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+              <span>CampusPowerLease.sol (🔄 Reversed Logic Zero-Trust)</span>
+            </button>
+            <button
+              onClick={() => setSelectedContract('ledger')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                selectedContract === 'ledger'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-slate-800 text-slate-300 hover:text-white'
+              }`}
+            >
+              <Code className="w-3.5 h-3.5" />
+              <span>EnergyLedger.sol (Standard Watchdog)</span>
+            </button>
           </div>
-          <pre className="p-5 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed bg-slate-950/60">
-            {SOLIDITY_CONTRACT_CODE}
+
+          <pre className="p-5 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed bg-slate-950/80 rounded-xl border border-slate-800">
+            {selectedContract === 'lease' ? SOLIDITY_POWER_LEASE_CONTRACT : SOLIDITY_CONTRACT_CODE}
           </pre>
         </div>
       )}

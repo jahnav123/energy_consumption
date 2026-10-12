@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Play, 
   RotateCcw, 
@@ -9,9 +9,11 @@ import {
   Cpu, 
   PowerOff, 
   ShieldCheck, 
-  ArrowRight,
   Sparkles,
-  ExternalLink
+  Lock,
+  Unlock,
+  RotateCw,
+  KeyRound
 } from 'lucide-react';
 import { BlockchainBlock } from '../types';
 
@@ -23,25 +25,37 @@ interface CutoffSimulatorProps {
     savedKWh: number;
     initialKW: number;
     cutKW: number;
+    isZeroTrustLease?: boolean;
   }) => Promise<BlockchainBlock>;
 }
 
 export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCutoff }) => {
-  const [selectedScenario, setSelectedScenario] = useState<'lecture_hall' | 'hostel_lounge' | 'computer_lab'>('lecture_hall');
-  const [simStep, setSimStep] = useState<number>(0); // 0: Idle, 1: Schedule ended, 2: Anomaly detected, 3: Grace countdown, 4: Relay cut, 5: Block created
+  const [selectedScenario, setSelectedScenario] = useState<'lecture_hall' | 'hostel_lounge' | 'zero_trust_lease'>('zero_trust_lease');
+  const [simStep, setSimStep] = useState<number>(0);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [countdown, setCountdown] = useState<number>(5);
   const [generatedBlock, setGeneratedBlock] = useState<BlockchainBlock | null>(null);
 
   const scenarios = {
+    zero_trust_lease: {
+      roomId: 'lh-101',
+      roomName: 'Lecture Hall 101 (Reversed Logic)',
+      buildingName: 'Engineering Block A',
+      initialKW: 0.00, // Starts at 0!
+      cutKW: 4.85,    // Energized on lease!
+      savedKWh: 4.85 * 3, // 100% idle waste eliminated by default
+      isZeroTrustLease: true,
+      description: '🔄 REVERSED LOGIC: Room is 100% De-Energized (0.00 kW). At 09:59 AM, Smart Contract mints a 60-min Power Lease and unlocks power Just-in-Time.',
+    },
     lecture_hall: {
       roomId: 'lh-101',
-      roomName: 'Lecture Hall 101',
+      roomName: 'Lecture Hall 101 (Standard Watchdog)',
       buildingName: 'Engineering Block A',
       initialKW: 4.85,
       cutKW: 0.15,
-      savedKWh: 4.70 * 2, // 2 hours till next slot
-      description: 'CS201 finishes at 11:00 AM. 120 students exit, but dual split AC units and 4K laser projector are left running.',
+      savedKWh: 4.70 * 2,
+      isZeroTrustLease: false,
+      description: 'CLASSIC WATCHDOG: Class finishes at 11:00 AM. System detects empty room with AC on, starts warning, and trips relay.',
     },
     hostel_lounge: {
       roomId: 'hostel-c-cr',
@@ -49,21 +63,14 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
       buildingName: 'Diamond Jubilee Residence',
       initialKW: 3.40,
       cutKW: 0.20,
-      savedKWh: 3.20 * 4, // 4 hours idle afternoon
-      description: 'Hostel common room empty during afternoon classes. AC and TV running on empty sofa seating.',
-    },
-    computer_lab: {
-      roomId: 'lab-302',
-      roomName: 'Computing Lab 3',
-      buildingName: 'Computing Sciences Wing',
-      initialKW: 6.20,
-      cutKW: 0.40,
-      savedKWh: 5.80 * 3, // 3 hours night load
-      description: 'Practical lab wraps up at 5:00 PM. 35 desktop monitors and central AC left running overnight.',
+      savedKWh: 3.20 * 4,
+      isZeroTrustLease: false,
+      description: 'CLASSIC WATCHDOG: Hostel common room empty during afternoon. 45s countdown triggers automated relay cut-off.',
     },
   };
 
   const activeScenario = scenarios[selectedScenario];
+  const isReversed = activeScenario.isZeroTrustLease;
 
   const handleStartSimulation = async () => {
     setIsRunning(true);
@@ -71,29 +78,43 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
     setGeneratedBlock(null);
     setCountdown(5);
 
-    // Step 1: Timetable slot expires (1.5s)
-    await new Promise(r => setTimeout(r, 1400));
-    setSimStep(2);
+    if (isReversed) {
+      // Reversed Flow: Default-OFF -> Verification -> Mint Lease -> Energize -> Auto-Lock
+      await new Promise(r => setTimeout(r, 1200));
+      setSimStep(2);
 
-    // Step 2: Telemetry engine detects high unscheduled draw (1.5s)
-    await new Promise(r => setTimeout(r, 1500));
-    setSimStep(3);
+      await new Promise(r => setTimeout(r, 1400));
+      setSimStep(3);
 
-    // Step 3: Fast grace period countdown (3s)
-    for (let i = 4; i >= 0; i--) {
-      await new Promise(r => setTimeout(r, 800));
-      setCountdown(i);
+      await new Promise(r => setTimeout(r, 1400));
+      setSimStep(4);
+
+      await new Promise(r => setTimeout(r, 1200));
+      setSimStep(5);
+      const block = await onSimulateCutoff(activeScenario);
+      setGeneratedBlock(block);
+      setIsRunning(false);
+    } else {
+      // Classic Watchdog Flow
+      await new Promise(r => setTimeout(r, 1400));
+      setSimStep(2);
+
+      await new Promise(r => setTimeout(r, 1500));
+      setSimStep(3);
+
+      for (let i = 4; i >= 0; i--) {
+        await new Promise(r => setTimeout(r, 800));
+        setCountdown(i);
+      }
+
+      setSimStep(4);
+      await new Promise(r => setTimeout(r, 1200));
+
+      setSimStep(5);
+      const block = await onSimulateCutoff(activeScenario);
+      setGeneratedBlock(block);
+      setIsRunning(false);
     }
-
-    // Step 4: Relay actuation trips non-essential circuit (1.2s)
-    setSimStep(4);
-    await new Promise(r => setTimeout(r, 1200));
-
-    // Step 5: Blockchain cryptographic verification & block creation
-    setSimStep(5);
-    const block = await onSimulateCutoff(activeScenario);
-    setGeneratedBlock(block);
-    setIsRunning(false);
   };
 
   const handleReset = () => {
@@ -106,18 +127,29 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
   return (
     <div className="space-y-6">
       {/* Introduction banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 p-6 rounded-3xl border border-indigo-500/30 shadow-xl">
+      <div className={`p-6 rounded-3xl border shadow-xl transition-all ${
+        isReversed
+          ? 'bg-gradient-to-r from-purple-950/60 via-slate-900 to-indigo-950/60 border-purple-500/40'
+          : 'bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border-indigo-500/30'
+      }`}>
         <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-semibold mb-3">
-            <Sparkles className="w-3.5 h-3.5" />
-            Hackathon Live Evaluation Simulator
+          <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold mb-3 border ${
+            isReversed
+              ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+              : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
+          }`}>
+            {isReversed ? <RotateCw className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {isReversed ? 'Hackathon Challenge: Reverse the Logic Demonstration' : 'Standard Watchdog Demonstration'}
           </div>
           <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-            Automated Circuit Cut-Off & Cryptographic Proof Pipeline
+            {isReversed 
+              ? '🔄 Reversed Logic: Just-in-Time Power Lease Activation' 
+              : 'Automated Circuit Cut-Off & Cryptographic Proof Pipeline'}
           </h2>
           <p className="text-sm text-slate-300 mt-2 leading-relaxed">
-            Experience how the system autonomously correlates academic class timetables with IoT smart switches, 
-            trips non-essential power breakers during empty slots, and seals the verified saved energy onto the blockchain ledger.
+            {isReversed
+              ? 'Instead of waiting for appliances to waste energy and cutting them off, non-essential circuits are physically isolated (Default-OFF). Power is ONLY supplied Just-In-Time when an authorized smart contract lease is verified.'
+              : 'Experience how the system autonomously correlates academic class timetables with IoT smart switches, trips non-essential power breakers during empty slots, and seals the verified saved energy onto the blockchain ledger.'}
           </p>
         </div>
 
@@ -137,21 +169,25 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
                 }}
                 className={`text-left p-4 rounded-2xl border transition-all ${
                   isSelected
-                    ? 'bg-slate-800/90 border-indigo-500/60 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/30'
+                    ? sc.isZeroTrustLease
+                      ? 'bg-purple-950/40 border-purple-500/60 shadow-lg shadow-purple-500/10 ring-1 ring-purple-500/40'
+                      : 'bg-slate-800/90 border-indigo-500/60 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/30'
                     : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 text-slate-400'
                 } ${isRunning ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <span className={`text-xs font-bold ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
+                  <span className={`text-xs font-bold ${
+                    isSelected ? (sc.isZeroTrustLease ? 'text-purple-300' : 'text-indigo-300') : 'text-slate-400'
+                  }`}>
                     {sc.roomName}
                   </span>
                   <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                    {sc.initialKW} kW Load
+                    {sc.isZeroTrustLease ? '0.00 kW Default' : `${sc.initialKW} kW Load`}
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 line-clamp-2 mb-2">{sc.description}</p>
                 <div className="text-[11px] text-emerald-400 font-mono font-medium">
-                  Est. Savings: {sc.savedKWh.toFixed(1)} kWh (~${(sc.savedKWh * 0.16).toFixed(2)})
+                  {sc.isZeroTrustLease ? '100% Vampire Draw Prevented' : `Est. Savings: ${sc.savedKWh.toFixed(1)} kWh`}
                 </div>
               </button>
             );
@@ -166,11 +202,19 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
             className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg transition-all ${
               isRunning || simStep === 5
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                : isReversed
+                ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white hover:brightness-110 shadow-purple-500/20 active:scale-95'
                 : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:brightness-110 shadow-emerald-500/20 active:scale-95'
             }`}
           >
             <Play className="w-4 h-4 fill-current" />
-            <span>{isRunning ? 'Executing Automated Flow...' : 'Run Live Cut-Off Simulation'}</span>
+            <span>
+              {isRunning 
+                ? 'Executing Pipeline...' 
+                : isReversed 
+                ? 'Run Reversed Logic Simulation' 
+                : 'Run Live Cut-Off Simulation'}
+            </span>
           </button>
 
           <button
@@ -183,7 +227,7 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
           </button>
 
           <span className="text-xs text-slate-400 ml-auto hidden sm:inline">
-            Status: <span className="font-mono text-indigo-300">{isRunning ? 'Simulation In Progress' : simStep === 5 ? 'Completed' : 'Ready'}</span>
+            Status: <span className="font-mono text-indigo-300">{isRunning ? 'Running' : simStep === 5 ? 'Done' : 'Ready'}</span>
           </span>
         </div>
       </div>
@@ -191,112 +235,150 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
       {/* Interactive Step-by-Step Pipeline */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6">
         <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-6 flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-emerald-400" />
-          Autonomous Execution Pipeline (5 Stages)
+          <Cpu className="w-4 h-4 text-purple-400" />
+          {isReversed ? 'Reversed Logic Pipeline: Just-In-Time Energization' : 'Autonomous Execution Pipeline (5 Stages)'}
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 relative">
-          {/* Stage 1 */}
-          <div className={`p-4 rounded-2xl border transition-all ${
-            simStep >= 1 ? 'bg-slate-800/90 border-emerald-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-bold text-emerald-400">01. TIMETABLE</span>
-              {simStep > 1 ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              ) : simStep === 1 ? (
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping"></span>
-              ) : null}
+        {isReversed ? (
+          /* REVERSED PIPELINE */
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 relative">
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 1 ? 'bg-purple-950/30 border-purple-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-purple-400">01. DEFAULT-OFF</span>
+                {simStep > 1 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 1 ? <Lock className="w-4 h-4 text-purple-400 animate-pulse" /> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Circuit Isolated</div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Room drawing 0.00 kW. Physically impossible to leak power.
+              </p>
             </div>
-            <div className="font-semibold text-xs text-white">Schedule Expires</div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Class session finishes. Room status updates to UNSCHEDULED.
-            </p>
-          </div>
 
-          {/* Stage 2 */}
-          <div className={`p-4 rounded-2xl border transition-all ${
-            simStep >= 2 ? 'bg-slate-800/90 border-amber-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-bold text-amber-400">02. ANOMALY</span>
-              {simStep > 2 ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              ) : simStep === 2 ? (
-                <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping"></span>
-              ) : null}
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 2 ? 'bg-purple-950/30 border-purple-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-indigo-400">02. DEMAND VERIFIED</span>
+                {simStep > 2 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 2 ? <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping"></span> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Class Timetable Trigger</div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                CS201 schedule verified for 10:00 AM. Access key requested.
+              </p>
             </div>
-            <div className="font-semibold text-xs text-white">Power Draw Check</div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Smart meter detects {activeScenario.initialKW} kW active draw despite room being empty.
-            </p>
-          </div>
 
-          {/* Stage 3 */}
-          <div className={`p-4 rounded-2xl border transition-all ${
-            simStep >= 3 ? 'bg-slate-800/90 border-amber-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-bold text-amber-300">03. GRACE PERIOD</span>
-              {simStep > 3 ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              ) : simStep === 3 ? (
-                <span className="font-mono text-xs font-bold text-amber-400">{countdown}s</span>
-              ) : null}
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 3 ? 'bg-purple-950/30 border-purple-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-sky-400">03. SMART LEASE</span>
+                {simStep > 3 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 3 ? <KeyRound className="w-4 h-4 text-sky-400 animate-spin" /> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Smart Contract Mints Lease</div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                `CampusPowerLease.sol` generates 60-min cryptographic token.
+              </p>
             </div>
-            <div className="font-semibold text-xs text-white">Safety Warning</div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Visual alert pushed. 5s countdown initiated for faculty override.
-            </p>
-          </div>
 
-          {/* Stage 4 */}
-          <div className={`p-4 rounded-2xl border transition-all ${
-            simStep >= 4 ? 'bg-slate-800/90 border-rose-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-bold text-rose-400">04. ACTUATION</span>
-              {simStep > 4 ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              ) : simStep === 4 ? (
-                <span className="h-2 w-2 rounded-full bg-rose-400 animate-ping"></span>
-              ) : null}
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 4 ? 'bg-purple-950/30 border-purple-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-emerald-400">04. ENERGIZE</span>
+                {simStep > 4 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 4 ? <Unlock className="w-4 h-4 text-emerald-400" /> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Just-In-Time Power</div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Relay contacts close. AC and projector power up for lecture.
+              </p>
             </div>
-            <div className="font-semibold text-xs text-white">Relay Cut-Off</div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Smart relay trips non-essential circuits. Draw drops to {activeScenario.cutKW} kW.
-            </p>
-          </div>
 
-          {/* Stage 5 */}
-          <div className={`p-4 rounded-2xl border transition-all ${
-            simStep >= 5 ? 'bg-slate-800/90 border-indigo-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
-          }`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-bold text-indigo-400">05. BLOCKCHAIN</span>
-              {simStep === 5 ? (
-                <ShieldCheck className="w-4 h-4 text-indigo-400" />
-              ) : null}
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 5 ? 'bg-purple-950/30 border-purple-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-purple-300">05. AUTO-RETURN</span>
+                {simStep === 5 ? <ShieldCheck className="w-4 h-4 text-purple-400" /> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Deterministic Safe Lock</div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Lease expires at 11:00 AM ➔ Reverts to 0.00 kW Default-OFF.
+              </p>
             </div>
-            <div className="font-semibold text-xs text-white">Immutable Ledger</div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Calculates saved kWh, hashes record, and commits proof on-chain.
-            </p>
           </div>
-        </div>
+        ) : (
+          /* CLASSIC WATCHDOG PIPELINE */
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 relative">
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 1 ? 'bg-slate-800/90 border-emerald-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-emerald-400">01. TIMETABLE</span>
+                {simStep > 1 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 1 ? <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping"></span> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Schedule Expires</div>
+              <p className="text-[11px] text-slate-400 mt-1">Class finishes. Room status updates to UNSCHEDULED.</p>
+            </div>
+
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 2 ? 'bg-slate-800/90 border-amber-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-amber-400">02. ANOMALY</span>
+                {simStep > 2 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 2 ? <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping"></span> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Power Draw Check</div>
+              <p className="text-[11px] text-slate-400 mt-1">Smart meter detects {activeScenario.initialKW} kW active draw.</p>
+            </div>
+
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 3 ? 'bg-slate-800/90 border-amber-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-amber-300">03. GRACE PERIOD</span>
+                {simStep > 3 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 3 ? <span className="font-mono text-xs font-bold text-amber-400">{countdown}s</span> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Safety Warning</div>
+              <p className="text-[11px] text-slate-400 mt-1">Visual alert pushed. 5s countdown initiated.</p>
+            </div>
+
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 4 ? 'bg-slate-800/90 border-rose-500/40 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-rose-400">04. ACTUATION</span>
+                {simStep > 4 ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : simStep === 4 ? <span className="h-2 w-2 rounded-full bg-rose-400 animate-ping"></span> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Relay Cut-Off</div>
+              <p className="text-[11px] text-slate-400 mt-1">Smart relay trips non-essential circuits.</p>
+            </div>
+
+            <div className={`p-4 rounded-2xl border transition-all ${
+              simStep >= 5 ? 'bg-slate-800/90 border-indigo-500/50 text-white' : 'bg-slate-950/40 border-slate-800/80 text-slate-400'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-indigo-400">05. BLOCKCHAIN</span>
+                {simStep === 5 ? <ShieldCheck className="w-4 h-4 text-indigo-400" /> : null}
+              </div>
+              <div className="font-semibold text-xs text-white">Immutable Ledger</div>
+              <p className="text-[11px] text-slate-400 mt-1">Calculates saved kWh and commits proof on-chain.</p>
+            </div>
+          </div>
+        )}
 
         {/* Live Transaction Receipt & Proof when simulation finishes */}
         {generatedBlock && (
-          <div className="mt-6 p-5 rounded-2xl bg-slate-950/90 border border-emerald-500/40 shadow-xl animate-fade-in">
+          <div className="mt-6 p-5 rounded-2xl bg-slate-950/90 border border-purple-500/40 shadow-xl animate-fade-in">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center space-x-2 text-emerald-400">
+              <div className="flex items-center space-x-2 text-purple-300">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 <span className="font-bold text-sm text-white">
                   Blockchain Transaction Confirmed (Block #{generatedBlock.blockNumber})
                 </span>
               </div>
               <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-lg">
-                Consensus: Proof of Authority
+                Contract: {isReversed ? 'CampusPowerLease.sol' : 'CampusEnergyLedger.sol'}
               </span>
             </div>
 
@@ -318,9 +400,9 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
 
               <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800/80 space-y-1.5 font-sans">
                 <div className="text-xs font-bold text-white mb-2 flex items-center justify-between">
-                  <span>Verified Conservation Metrics:</span>
+                  <span>{isReversed ? 'Power Lease Authorization Metrics:' : 'Verified Conservation Metrics:'}</span>
                   <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                    +{(activeScenario.savedKWh * 5).toFixed(0)} Green Tokens Minted
+                    {isReversed ? '⚡ 60-Min Timed Lease Active' : `+${(activeScenario.savedKWh * 5).toFixed(0)} Tokens Minted`}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-300">
@@ -328,16 +410,12 @@ export const CutoffSimulator: React.FC<CutoffSimulatorProps> = ({ onSimulateCuto
                   <span className="font-semibold text-white">{activeScenario.roomName}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-300">
-                  <span>Power Drop:</span>
-                  <span className="font-mono text-rose-400">{activeScenario.initialKW} kW ➔ {activeScenario.cutKW} kW</span>
+                  <span>Logic Model:</span>
+                  <span className="font-mono text-purple-300">{isReversed ? 'Zero-Trust Default-OFF' : 'Reactive Watchdog Cut-Off'}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-300">
-                  <span>Avoided Wastage:</span>
+                  <span>Energy Prevented / Managed:</span>
                   <span className="font-mono text-emerald-400 font-bold">{activeScenario.savedKWh.toFixed(1)} kWh</span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span>Carbon Emissions Prevented:</span>
-                  <span className="font-mono text-teal-300">{(activeScenario.savedKWh * 0.82).toFixed(1)} kg CO₂</span>
                 </div>
               </div>
             </div>

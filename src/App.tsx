@@ -29,7 +29,9 @@ import {
   BuildingStats, 
   BlockchainBlock, 
   DepartmentScore, 
-  OverrideInfo 
+  OverrideInfo,
+  SystemMode,
+  PowerLease
 } from './types';
 import { 
   INITIAL_ROOMS, 
@@ -40,12 +42,12 @@ import {
   createGenesisBlock, 
   appendBlock, 
   verifyBlockchainIntegrity, 
-  VerificationResult,
-  calculateSHA256
+  VerificationResult
 } from './services/blockchain';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'rooms' | 'simulator' | 'blockchain' | 'leaderboard'>('rooms');
+  const [systemMode, setSystemMode] = useState<SystemMode>('watchdog'); // 'watchdog' vs 'zero_trust'
   const [rooms, setRooms] = useState<CampusRoom[]>(INITIAL_ROOMS);
   const [buildings, setBuildings] = useState<BuildingStats[]>(INITIAL_BUILDINGS);
   const [scores, setScores] = useState<DepartmentScore[]>(INITIAL_LEADERBOARD);
@@ -106,7 +108,21 @@ export const App: React.FC = () => {
         { roomId: 'mech-ws', buildingName: 'Engineering Block A', signer: '0x32A...ProfHenderson' }
       );
 
-      const initialChain = [genesis, block1, block2, block3];
+      const block4 = await appendBlock(
+        block3,
+        'POWER_LEASE_MINTED',
+        {
+          leaseId: '0xLEASE_94B2',
+          contract: 'CampusPowerLease.sol',
+          roomId: 'lab-302',
+          grantedTo: 'Dr. Aris Thorne (CS402 Lecture)',
+          durationMinutes: 60,
+          mode: 'REVERSED_ZERO_TRUST'
+        },
+        { roomId: 'lab-302', buildingName: 'Computing Sciences Wing', signer: '0xGRID_AUTH_NODE' }
+      );
+
+      const initialChain = [genesis, block1, block2, block3, block4];
       setBlocks(initialChain);
       const verify = await verifyBlockchainIntegrity(initialChain);
       setVerificationResult(verify);
@@ -115,69 +131,130 @@ export const App: React.FC = () => {
     initChain();
   }, []);
 
-  // Autonomous Countdown & Relay Trip Tick Loop
+  // Autonomous Countdown & Relay Trip Tick Loop (in Watchdog mode)
   useEffect(() => {
     const timer = setInterval(() => {
-      setRooms(prevRooms => {
-        return prevRooms.map(room => {
-          if (room.anomalyStatus === 'UNSCHEDULED_CONSUMPTION' && room.relayStatus === 'GRACE_PERIOD') {
-            if (room.graceTimeRemainingSec > 1) {
-              return {
-                ...room,
-                graceTimeRemainingSec: room.graceTimeRemainingSec - 1,
-              };
-            } else {
-              // Grace period reached 0 -> Autonomous Cut-Off!
-              const savedKwhIncrement = (room.currentLoadKW - room.baselineIdleKW) * 1.5;
-              setTotalSavedKWh(prev => prev + savedKwhIncrement);
+      // In Watchdog mode: count down violations and auto-trip
+      if (systemMode === 'watchdog') {
+        setRooms(prevRooms => {
+          return prevRooms.map(room => {
+            if (room.anomalyStatus === 'UNSCHEDULED_CONSUMPTION' && room.relayStatus === 'GRACE_PERIOD') {
+              if (room.graceTimeRemainingSec > 1) {
+                return {
+                  ...room,
+                  graceTimeRemainingSec: room.graceTimeRemainingSec - 1,
+                };
+              } else {
+                // Grace period reached 0 -> Autonomous Cut-Off!
+                const savedKwhIncrement = (room.currentLoadKW - room.baselineIdleKW) * 1.5;
+                setTotalSavedKWh(prev => prev + savedKwhIncrement);
 
-              // Append block asynchronously
-              if (blocks.length > 0) {
-                const latest = blocks[blocks.length - 1];
-                appendBlock(
-                  latest,
-                  'RELAY_CUTOFF',
-                  {
-                    roomId: room.id,
-                    roomName: room.name,
-                    building: room.building,
-                    savedKWh: parseFloat(savedKwhIncrement.toFixed(2)),
-                    previousLoadKW: room.currentLoadKW,
-                    trippedCircuits: ['HVAC', 'Lighting', 'Projector'],
-                    automated: true
-                  },
-                  { roomId: room.id, buildingName: room.building }
-                ).then(newBlock => {
-                  setBlocks(prev => {
-                    const updated = [...prev, newBlock];
-                    verifyBlockchainIntegrity(updated).then(res => setVerificationResult(res));
-                    return updated;
+                if (blocks.length > 0) {
+                  const latest = blocks[blocks.length - 1];
+                  appendBlock(
+                    latest,
+                    'RELAY_CUTOFF',
+                    {
+                      roomId: room.id,
+                      roomName: room.name,
+                      building: room.building,
+                      savedKWh: parseFloat(savedKwhIncrement.toFixed(2)),
+                      previousLoadKW: room.currentLoadKW,
+                      trippedCircuits: ['HVAC', 'Lighting', 'Projector'],
+                      automated: true
+                    },
+                    { roomId: room.id, buildingName: room.building }
+                  ).then(newBlock => {
+                    setBlocks(prev => {
+                      const updated = [...prev, newBlock];
+                      verifyBlockchainIntegrity(updated).then(res => setVerificationResult(res));
+                      return updated;
+                    });
                   });
-                });
-              }
+                }
 
-              return {
-                ...room,
-                relayStatus: 'DISCONNECTED',
-                currentLoadKW: room.baselineIdleKW,
-                graceTimeRemainingSec: 0,
-                totalSavedKWh: room.totalSavedKWh + savedKwhIncrement,
-                switches: {
-                  ...room.switches,
-                  hvac: false,
-                  lights: false,
-                  projector: false,
-                },
-              };
+                return {
+                  ...room,
+                  relayStatus: 'DISCONNECTED',
+                  currentLoadKW: room.baselineIdleKW,
+                  graceTimeRemainingSec: 0,
+                  totalSavedKWh: room.totalSavedKWh + savedKwhIncrement,
+                  switches: {
+                    ...room.switches,
+                    hvac: false,
+                    lights: false,
+                    projector: false,
+                  },
+                };
+              }
             }
-          }
-          return room;
+            return room;
+          });
         });
-      });
+      }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [blocks]);
+  }, [blocks, systemMode]);
+
+  // Request Just-In-Time Power Lease (Zero-Trust Reversed Mode)
+  const handleRequestPowerLease = useCallback(async (roomId: string) => {
+    const targetRoom = rooms.find(r => r.id === roomId);
+    if (!targetRoom) return;
+
+    const leaseId = `0xLEASE_${Math.random().toString(16).substring(2, 6).toUpperCase()}`;
+    const newLease: PowerLease = {
+      leaseId,
+      roomId,
+      grantedTo: 'Student / Faculty Smart Key',
+      role: 'Just-in-Time Verified Lease',
+      durationMinutes: 60,
+      remainingMinutes: 60,
+      expiresAt: '12:15 PM',
+      txHash: `0x${Math.random().toString(16).substring(2, 12)}`,
+      active: true,
+    };
+
+    setRooms(prev => prev.map(r => {
+      if (r.id !== roomId) return r;
+      return {
+        ...r,
+        activeLease: newLease,
+        relayStatus: 'CONNECTED',
+        anomalyStatus: 'NORMAL',
+        currentLoadKW: 4.85,
+        switches: {
+          hvac: true,
+          lights: true,
+          projector: true,
+          workstations: false,
+        }
+      };
+    }));
+
+    if (blocks.length > 0) {
+      const latest = blocks[blocks.length - 1];
+      const newBlock = await appendBlock(
+        latest,
+        'POWER_LEASE_MINTED',
+        {
+          leaseId,
+          contract: 'CampusPowerLease.sol',
+          roomId: targetRoom.id,
+          roomName: targetRoom.name,
+          building: targetRoom.building,
+          durationMinutes: 60,
+          grantedTo: 'Authorized Timetable Key / Student Pass',
+          mode: 'ZERO_TRUST_JIT_ENERGIZATION'
+        },
+        { roomId: targetRoom.id, buildingName: targetRoom.building, signer: '0xSMART_BREAKER_NODE' }
+      );
+      const updated = [...blocks, newBlock];
+      setBlocks(updated);
+      const verify = await verifyBlockchainIntegrity(updated);
+      setVerificationResult(verify);
+    }
+  }, [rooms, blocks]);
 
   // Handle Switch Toggles
   const handleToggleSwitch = useCallback((roomId: string, switchType: SwitchType) => {
@@ -197,25 +274,27 @@ export const App: React.FC = () => {
         if (updatedSwitches.projector) calculatedKW += 0.8;
         if (updatedSwitches.workstations) calculatedKW += 1.8;
 
-        // Determine if this is an anomaly
         const isScheduled = !!room.currentSchedule;
         const isOverridden = room.anomalyStatus === 'OVERRIDE_ACTIVE';
+        const hasLease = !!room.activeLease;
         const hasActiveDraw = calculatedKW > room.baselineIdleKW + 0.3;
 
         let anomalyStatus = room.anomalyStatus;
         let graceTimeRemainingSec = room.graceTimeRemainingSec;
         let relayStatus = room.relayStatus;
 
-        if (!isScheduled && !isOverridden && hasActiveDraw) {
-          anomalyStatus = 'UNSCHEDULED_CONSUMPTION';
-          if (relayStatus !== 'GRACE_PERIOD') {
-            graceTimeRemainingSec = 45;
-            relayStatus = 'GRACE_PERIOD';
+        if (systemMode === 'watchdog') {
+          if (!isScheduled && !isOverridden && !hasLease && hasActiveDraw) {
+            anomalyStatus = 'UNSCHEDULED_CONSUMPTION';
+            if (relayStatus !== 'GRACE_PERIOD') {
+              graceTimeRemainingSec = 45;
+              relayStatus = 'GRACE_PERIOD';
+            }
+          } else if (!hasActiveDraw && anomalyStatus === 'UNSCHEDULED_CONSUMPTION') {
+            anomalyStatus = 'NORMAL';
+            relayStatus = 'CONNECTED';
+            graceTimeRemainingSec = 0;
           }
-        } else if (!hasActiveDraw && anomalyStatus === 'UNSCHEDULED_CONSUMPTION') {
-          anomalyStatus = 'NORMAL';
-          relayStatus = 'CONNECTED';
-          graceTimeRemainingSec = 0;
         }
 
         return {
@@ -228,9 +307,9 @@ export const App: React.FC = () => {
         };
       });
     });
-  }, []);
+  }, [systemMode]);
 
-  // Manual Relay Trip
+  // Manual Relay Trip / Revoke Lease
   const handleTripRelay = useCallback(async (roomId: string) => {
     const targetRoom = rooms.find(r => r.id === roomId);
     if (!targetRoom) return;
@@ -242,10 +321,11 @@ export const App: React.FC = () => {
       if (r.id !== roomId) return r;
       return {
         ...r,
-        relayStatus: 'DISCONNECTED',
-        currentLoadKW: r.baselineIdleKW,
+        relayStatus: systemMode === 'zero_trust' ? 'DE_ENERGIZED_LOCKED' : 'DISCONNECTED',
+        currentLoadKW: systemMode === 'zero_trust' ? 0.00 : r.baselineIdleKW,
         graceTimeRemainingSec: 0,
         totalSavedKWh: r.totalSavedKWh + saved,
+        activeLease: undefined,
         switches: {
           ...r.switches,
           hvac: false,
@@ -259,14 +339,13 @@ export const App: React.FC = () => {
       const latest = blocks[blocks.length - 1];
       const newBlock = await appendBlock(
         latest,
-        'RELAY_CUTOFF',
+        systemMode === 'zero_trust' ? 'POWER_LEASE_EXPIRED' : 'RELAY_CUTOFF',
         {
           roomId: targetRoom.id,
           roomName: targetRoom.name,
           building: targetRoom.building,
           savedKWh: saved,
-          manualOperator: 'Facility Manager (Manual Trip)',
-          reason: 'Manual energy shed enforcement'
+          operator: systemMode === 'zero_trust' ? 'Smart Contract Lease Expiry' : 'Manual Relay Trip'
         },
         { roomId: targetRoom.id, buildingName: targetRoom.building }
       );
@@ -275,7 +354,7 @@ export const App: React.FC = () => {
       const verify = await verifyBlockchainIntegrity(updated);
       setVerificationResult(verify);
     }
-  }, [rooms, blocks]);
+  }, [rooms, blocks, systemMode]);
 
   // Restore Relay
   const handleRestoreRelay = useCallback((roomId: string) => {
@@ -337,7 +416,7 @@ export const App: React.FC = () => {
           tamperedDataHash: '0xBAD000000000000000000000000000000000000000000000000000000000DEAD',
           payload: {
             ...b.payload,
-            savedKWh: 0.1, // Rogue DB admin alters savings record!
+            savedKWh: 0.1,
             tampered: true,
             tamperedBy: 'Centralized SQL Admin (Unauthorized Edit)'
           }
@@ -353,7 +432,6 @@ export const App: React.FC = () => {
 
   // Restore Block
   const handleRestoreBlock = useCallback(async (blockNumber: number) => {
-    // Rebuild clean block
     const updated = blocks.map(b => {
       if (b.blockNumber === blockNumber) {
         const { isTampered, tamperedDataHash, ...rest } = b;
@@ -376,7 +454,7 @@ export const App: React.FC = () => {
     setVerificationResult(verify);
   }, [blocks]);
 
-  // Simulator Cut-off action
+  // Simulator Cut-off / Lease action
   const handleSimulateCutoff = useCallback(async (scenario: {
     roomId: string;
     roomName: string;
@@ -384,33 +462,14 @@ export const App: React.FC = () => {
     savedKWh: number;
     initialKW: number;
     cutKW: number;
+    isZeroTrustLease?: boolean;
   }) => {
-    // Update room
-    setRooms(prev => prev.map(r => {
-      if (r.id === scenario.roomId) {
-        return {
-          ...r,
-          relayStatus: 'DISCONNECTED',
-          currentLoadKW: scenario.cutKW,
-          graceTimeRemainingSec: 0,
-          totalSavedKWh: r.totalSavedKWh + scenario.savedKWh,
-          switches: {
-            ...r.switches,
-            hvac: false,
-            lights: false,
-            projector: false,
-          }
-        };
-      }
-      return r;
-    }));
-
     setTotalSavedKWh(prev => prev + scenario.savedKWh);
 
     const latest = blocks[blocks.length - 1];
     const newBlock = await appendBlock(
       latest,
-      'RELAY_CUTOFF',
+      scenario.isZeroTrustLease ? 'POWER_LEASE_MINTED' : 'RELAY_CUTOFF',
       {
         roomId: scenario.roomId,
         roomName: scenario.roomName,
@@ -418,6 +477,7 @@ export const App: React.FC = () => {
         savedKWh: scenario.savedKWh,
         initialKW: scenario.initialKW,
         cutKW: scenario.cutKW,
+        contract: scenario.isZeroTrustLease ? 'CampusPowerLease.sol' : 'EnergyLedger.sol',
         automated: true,
         greenTokensMinted: Math.round(scenario.savedKWh * 5),
       },
@@ -436,10 +496,12 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Header */}
+      {/* Header with Mode Switcher */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        systemMode={systemMode}
+        setSystemMode={setSystemMode}
         activeViolationsCount={activeViolationsCount}
         totalKWhSaved={totalSavedKWh}
         isChainValid={verificationResult.isValid}
@@ -448,7 +510,7 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* KPI Overview Metrics (Always visible) */}
+        {/* KPI Overview Metrics */}
         <OverviewMetrics
           rooms={rooms}
           buildings={buildings}
@@ -461,9 +523,11 @@ export const App: React.FC = () => {
             <EnergyAnalytics buildings={buildings} />
             <RoomMatrix
               rooms={rooms}
+              systemMode={systemMode}
               onToggleSwitch={handleToggleSwitch}
               onTripRelay={handleTripRelay}
               onRestoreRelay={handleRestoreRelay}
+              onRequestPowerLease={handleRequestPowerLease}
               onOpenOverrideModal={room => {
                 setSelectedRoomForOverride(room);
                 setIsOverrideModalOpen(true);
@@ -472,7 +536,7 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 2: Judge Cut-Off Simulator */}
+        {/* Tab 2: Cut-Off & Lease Simulator */}
         {activeTab === 'simulator' && (
           <CutoffSimulator onSimulateCutoff={handleSimulateCutoff} />
         )}
@@ -508,8 +572,8 @@ export const App: React.FC = () => {
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>⚡ VoltLedger Campus Energy Monitor • Hackathon Prototype</span>
-          <span className="font-mono text-slate-400">Proof of Authority EVM • Real SHA-256 Web Crypto Engine</span>
+          <span>⚡ VoltLedger Campus Energy Monitor • Hackathon Dual-Architecture</span>
+          <span className="font-mono text-slate-400">Watchdog Mode + Reversed Zero-Trust Power Grid</span>
         </div>
       </footer>
     </div>
